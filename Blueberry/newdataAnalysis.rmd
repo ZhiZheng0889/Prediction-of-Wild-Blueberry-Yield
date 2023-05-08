@@ -450,17 +450,35 @@ cv_results <- resample(learner = stack, task = train_task, resampling = cv_desc,
 cv_mae <- cv_results$aggr
 print(paste("10-fold cross-validated MAE:", cv_mae))
 
+# Load the test dataset
+test_data_url <- "https://www.dropbox.com/s/62xd4ajnwrqc7eg/test.csv?dl=1"
+test_data <- read_csv(test_data_url)
+
+# Train the Stacking model on the entire training data
+trained_stack <- train(stack, train_task)
+
+# Predict the yield for the test dataset
+test_preds <- predict(trained_stack, newdata = test_data %>% dplyr::select(-id))
+
+# Create a submission file
+submission <- data.frame(id = test_data$id, yield = test_preds$data$response)
+write.csv(submission, "submission.csv", row.names = FALSE)
+
+
 ```
 ```{r}
 # Load required libraries
 library(tidyverse)
+library(randomForest)
 library(caret)
-library(caretEnsemble)
+library(h2o)
+
+# Initialize H2O
+h2o.init()
 
 # Load the datasets
 train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
 train_data <- read_csv(train_data_url)
-
 test_data_url <- "https://www.dropbox.com/s/62xd4ajnwrqc7eg/test.csv?dl=1"
 test_data <- read_csv(test_data_url)
 
@@ -473,26 +491,310 @@ train_index <- createDataPartition(train_data$yield, p = 0.8, list = FALSE)
 train_set <- train_data[train_index, ]
 validation_set <- train_data[-train_index, ]
 
-# Train base models using caret
-set.seed(42)
-rf_model1 <- train(yield ~ ., data = train_set, method = "rf", trControl = trainControl(method = "cv", number = 5))
-rf_model2 <- train(yield ~ ., data = train_set, method = "rf", trControl = trainControl(method = "cv", number = 5))
+# Convert data.frames to H2OFrame
+train_set_h2o <- as.h2o(train_set)
+validation_set_h2o <- as.h2o(validation_set)
+test_data_h2o <- as.h2o(test_data %>% dplyr::select(-id))
 
-# Create a caretList of base models
-base_models <- caretList(rf_model1 = rf_model1, rf_model2 = rf_model2)
+# Train base models using H2O
+rf_model1 <- h2o.randomForest(y = "yield", training_frame = train_set_h2o, nfolds = 10, seed = 42, keep_cross_validation_predictions = TRUE)
+rf_model2 <- h2o.randomForest(y = "yield", training_frame = train_set_h2o, nfolds = 10, mtries = 5, seed = 42, keep_cross_validation_predictions = TRUE)
+rf_model3 <- h2o.randomForest(y = "yield", training_frame = train_set_h2o, nfolds = 10, mtries = 10, seed = 42, keep_cross_validation_predictions = TRUE)
+rf_model4 <- h2o.randomForest(y = "yield", training_frame = train_set_h2o, nfolds = 10, mtries = 15, seed = 42, keep_cross_validation_predictions = TRUE)
 
 # Train the Stacking model
+base_models <- list(rf_model1@model_id, rf_model2@model_id, rf_model3@model_id, rf_model4@model_id)
+stacking_model <- h2o.stackedEnsemble(y = "yield", training_frame = train_set_h2o, base_models = base_models, seed = 42)
+
+# Make predictions using the Stacking model
+predictions <- h2o.predict(stacking_model, test_data_h2o)
+
+# Create a submission file
+submission <- data.frame(id = test_data$id, yield = as.vector(predictions$predict))
+write.csv(submission, "submission.csv", row.names = FALSE)
+
+# Shutdown H2O
+h2o.shutdown(prompt = FALSE)
+
+
+```
+```{r}
+# Load required libraries
+library(tidyverse)
+library(randomForest)
+library(ipred)
+library(gbm)
+library(superml)
+library(Metrics)
+library(rpart)
+library(caret)
+library(mlr)
+
+# Load the datasets
+train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
+train_data <- read_csv(train_data_url)
+
+# Drop 'id' column from the train dataset
+train_data <- train_data %>% dplyr::select(-id)
+
+# Split the train dataset into training and validation sets
 set.seed(42)
-stack_control <- trainControl(method = "cv", number = 5, savePredictions = TRUE, verboseIter = FALSE)
-stacking_model <- caretStack(base_models, method = "lm", trControl = stack_control)
+train_index <- createDataPartition(train_data$yield, p = 0.8, list = FALSE)
+train_set <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
 
-# Make predictions using the stacking model
-predictions <- predict(stacking_model, newdata = test_data %>% dplyr::select(-id))
+# Bagging
+set.seed(42)
+bagging_model <- bagging(yield ~ ., 
+                         data = train_set, 
+                         B = 10,  # Number of base models
+                         coob = TRUE, 
+                         control = rpart.control(cp = 0.01))
 
-# Create a dataframe with 'id' and 'yield' columns
-submission <- data.frame(id = test_data$id, yield = predictions)
+bagging_predictions <- predict(bagging_model, validation_set)
+bagging_mae <- mae(validation_set$yield, bagging_predictions)
+print(paste("Bagging MAE:", bagging_mae))
 
-# Write the submission dataframe to a CSV file
-write_csv(submission, "submission.csv")
+# Boosting
+set.seed(42)
+boosting_model <- gbm(yield ~ ., 
+                      data = train_set, 
+                      distribution = "gaussian", 
+                      n.trees = 100,
+                      interaction.depth = 4,
+                      shrinkage = 0.1,
+                      bag.fraction = 0.5)
+
+boosting_predictions <- predict(boosting_model, validation_set, n.trees = 100)
+boosting_mae <- mae(validation_set$yield, boosting_predictions)
+print(paste("Boosting MAE:", boosting_mae))
+
+# Create a task for the training set
+train_task <- makeRegrTask(id = "train", data = train_set, target = "yield")
+
+# Define base models
+lrn1 <- makeLearner("regr.randomForest", id = "rf_model1")
+lrn2 <- makeLearner("regr.randomForest", id = "rf_model2")
+
+# Create a list of base models
+base_learners <- list(lrn1, lrn2)
+
+# Train the Stacking model
+stack <- makeStackedLearner(base_learners, super.learner = "regr.lm", method = "stack.cv")
+
+# Define 20-fold cross-validation strategy
+cv_desc <- makeResampleDesc("CV", iters = 20)
+
+# Perform 20-fold cross-validation on the Stacking model
+set.seed(42)
+cv_results <- resample(learner = stack, task = train_task, resampling = cv_desc, measures = list(mlr_mae))
+
+# Obtain the cross-validated MAE
+cv_mae <- cv_results$aggr
+print(paste("20-fold cross-validated MAE:", cv_mae))
+
+# Load the test dataset
+test_data_url <- "https://www.dropbox.com/s/62xd4ajnwrqc7eg/test.csv?dl=1"
+test_data <- read_csv(test_data_url)
+
+# Train the Stacking model on the entire train dataset
+stack_model_full <- train(stack, makeRegrTask(id = "full_train", data = train_data, target = "yield"))
+
+# Make predictions using the Stacking model on the test dataset
+test_data_no_id <- test_data %>% dplyr::select(-id)
+stacking_test_predictions <- predict(stack_model_full, newdata = test_data_no_id)
+
+# Create a submission file
+submission <- data.frame(id = test_data$id, yield = stacking_test_predictions$data$response)
+write.csv(submission, "submission.csv", row.names = FALSE)
+
+```
+
+```{r}
+# Load required libraries
+library(h2o)
+library(dplyr)
+
+# Initialize H2O
+h2o.init()
+
+# Custom function for calculating Mean Absolute Error using competition training data
+fold_mae <- function(y, preds, data_type) {
+  y_comp <- y[data_type == 0]
+  preds_comp <- preds[data_type == 0]
+  return(mean(abs(y_comp - preds_comp)))
+}
+
+# Load your dataset and preprocess it as necessary
+# (You need to replace 'train.csv' and 'test.csv' with your actual file paths)
+train_data <- read.csv('train.csv')
+test_data <- read.csv('test.csv')
+
+# Convert data frames to H2O objects
+train_h2o <- as.h2o(train_data)
+test_h2o <- as.h2o(test_data)
+
+# Set the features, target, and other settings for AutoML
+features <- colnames(train_h2o)[-which(colnames(train_h2o) %in% c('yield', 'data_type'))]
+target <- 'yield'
+
+# AutoML settings
+time_budget <- 3600  # Set the time budget (in seconds) for AutoML
+n_folds <- 5  # Set the number of folds for cross-validation
+random_seed <- 42  # Set the random seed for reproducibility
+
+# Run H2O's AutoML
+aml <- h2o.automl(
+  x = features,
+  y = target,
+  training_frame = train_h2o,
+  nfolds = n_folds,
+  max_runtime_secs = time_budget,
+  seed = random_seed,
+  include_algos = c("XGBoost", "GLM", "DeepLearning", "DRF")
+)
+
+# Extract the best model
+best_model <- aml@leader
+
+# Make predictions on the test set
+test_preds <- h2o.predict(best_model, test_h2o)
+
+# Make predictions on the training set and calculate the fold MAE
+train_preds <- h2o.predict(best_model, train_h2o)
+mae_result <- fold_mae(train_data$yield, as.vector(train_preds$predict), train_data$data_type)
+
+print(paste0("Fold MAE: ", mae_result))
+
+```
+
+
+```{r}
+# Load required libraries
+library(h2o)
+library(tidyr)
+library(dplyr)
+library(readr)
+
+# Initialize H2O
+h2o.init()
+
+# Load the datasets
+train_data <- read_csv("train.csv")
+test_data <- read_csv("test.csv")
+
+# Define the features and target variables
+features <- colnames(train_data)[colnames(train_data) != "id" & colnames(train_data) != "yield"]
+target <- "yield"
+
+# Convert the datasets to H2OFrame
+train_h2o <- as.h2o(train_data)
+test_h2o <- as.h2o(test_data)
+
+# Define the constants for the number of outer folds, number of repeats, and the random seed
+n_outer_folds <- 5
+n_repeats <- 3
+random_seed <- 42
+
+# Train the H2O AutoML model
+aml <- h2o.automl(
+  x = features,
+  y = target,
+  training_frame = train_h2o,
+  nfolds = n_outer_folds,
+  max_runtime_secs = 600, # adjust the time budget as needed
+  seed = random_seed
+)
+
+# Get the best model
+best_model <- aml@leader
+
+# Make predictions using the best model
+test_preds <- h2o.predict(best_model, test_h2o)
+
+# Save the predictions to a CSV file
+submission <- data.frame(id = test_data$id, yield = as.vector(test_preds$predict))
+write.csv(submission, "submission2.csv", row.names = FALSE)
+
+# Shutdown H2O
+h2o.shutdown(prompt = FALSE)
+
+```
+```{r}
+library(h2o)
+library(tidyr)
+library(dplyr)
+library(readr)
+
+# Initialize H2O
+h2o.init()
+
+# Load the datasets
+train_data <- read_csv("train.csv")
+test_data <- read_csv("test.csv")
+
+# Define the features and target variables
+features <- colnames(train_data)[colnames(train_data) != "id" & colnames(train_data) != "yield"]
+target <- "yield"
+
+# Convert the datasets to H2OFrame
+train_h2o <- as.h2o(train_data)
+test_h2o <- as.h2o(test_data)
+
+# Set the random seed
+random_seed <- 42
+
+# Shuffle the train_data
+set.seed(random_seed)
+train_data <- train_data[sample(nrow(train_data)),]
+
+# H2O AutoML settings
+first_time_budget <- 600
+min_time_budget <- 60
+n_folds <- 5
+
+# Train the H2O AutoML model with custom LGBM settings
+automl_settings <- list(
+  nfolds = n_folds,
+  max_runtime_secs = first_time_budget,
+  seed = random_seed,
+  include_algos = c("XGBoost", "GLM", "DeepLearning", "DRF"),
+  custom_hyperparams = list(
+    my_lgbm = list(
+      n_estimators = 265,
+      num_leaves = 93,
+      min_child_samples = 20,
+      learning_rate = 0.05533790147941807,
+      log_max_bin = 10,
+      colsample_bytree = 0.8809128870084636,
+      reg_alpha = 0.0009765625,
+      reg_lambda = 0.015589408048174165
+    )
+  )
+)
+
+aml <- h2o.automl(
+  x = features,
+  y = target,
+  training_frame = train_h2o,
+  nfolds = n_folds,
+  max_runtime_secs = first_time_budget,
+  seed = random_seed,
+  include_algos = c("XGBoost", "GLM", "DeepLearning", "DRF")
+)
+
+# Get the best model
+best_model <- aml@leader
+
+# Make predictions using the best model
+test_preds <- h2o.predict(best_model, test_h2o)
+
+# Save the predictions to a CSV file
+submission <- data.frame(id = test_data$id, yield = as.vector(test_preds$predict))
+write.csv(submission, "submission3.csv", row.names = FALSE)
+
+# Shutdown H2O
+h2o.shutdown(prompt = FALSE)
+
 ```
 
