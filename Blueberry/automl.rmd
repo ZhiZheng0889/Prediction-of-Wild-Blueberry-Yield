@@ -248,4 +248,71 @@ h2o.shutdown(prompt = FALSE)
 ```
 
 
+```{r}
+# Load required libraries
+library(h2o)
+library(tidyr)
+library(dplyr)
+library(readr)
+
+# Initialize H2O
+h2o.init()
+
+# Load the datasets
+train_data <- read_csv("train.csv")
+test_data <- read_csv("test.csv")
+
+# Preprocess the data
+train_data$data_type <- 0
+test_data$data_type <- 0
+
+# Feature engineering
+fe <- function(df) {
+  df$RainingDays <- ifelse(df$RainingDays == 26, 24,
+                           ifelse(df$RainingDays == 33, 34, df$RainingDays))
+  return(df)
+}
+
+train_data <- fe(train_data)
+test_data <- fe(test_data)
+
+# Convert the datasets to H2OFrame
+train_h2o <- as.h2o(train_data)
+test_h2o <- as.h2o(test_data)
+
+# Set the features, target, and other settings for AutoML
+features <- colnames(train_h2o)[-which(colnames(train_h2o) %in% c('yield', 'data_type'))]
+target <- 'yield'
+
+# AutoML settings
+time_budget <- 3600  # Set the time budget (in seconds) for AutoML
+n_folds <- 5  # Set the number of folds for cross-validation
+random_seed <- 42  # Set the random seed for reproducibility
+
+# Run H2O's AutoML with GBM algorithm
+aml <- h2o.automl(
+  x = features,
+  y = target,
+  training_frame = train_h2o,
+  nfolds = n_folds,
+  max_runtime_secs = time_budget,
+  seed = random_seed,
+  include_algos = c("GBM")
+)
+
+# Extract the best model
+best_model <- aml@leader
+
+# Make predictions on the test set
+test_preds <- h2o.predict(best_model, test_h2o)
+
+# Create the submission file
+submission <- data.frame(id = test_data$id, yield = as.vector(test_preds$predict))
+write.csv(submission, "submission4.csv", row.names = FALSE)
+
+# Shutdown H2O
+h2o.shutdown(prompt = FALSE)
+
+
+```
 
