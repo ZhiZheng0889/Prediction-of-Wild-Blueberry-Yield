@@ -107,7 +107,7 @@ features <- colnames(train_h2o)[-which(colnames(train_h2o) %in% c('yield', 'data
 target <- 'yield'
 
 # AutoML settings
-time_budget <- 3600  # Set the time budget (in seconds) for AutoML
+time_budget <- 7200  # Set the time budget (in seconds) for AutoML
 n_folds <- 5  # Set the number of folds for cross-validation
 random_seed <- 42  # Set the random seed for reproducibility
 
@@ -149,8 +149,8 @@ train_h2o <- as.h2o(train_data)
 test_h2o <- as.h2o(test_data)
 
 # Define the constants for the number of outer folds, number of repeats, and the random seed
-n_outer_folds <- 5
-n_repeats <- 3
+n_outer_folds <- 10
+n_repeats <- 6
 random_seed <- 42
 
 # Train the H2O AutoML model
@@ -313,6 +313,116 @@ write.csv(submission, "submission4.csv", row.names = FALSE)
 # Shutdown H2O
 h2o.shutdown(prompt = FALSE)
 
+
+```
+
+```{r}
+# Load required libraries
+library(h2o)
+library(tidyr)
+library(dplyr)
+library(readr)
+
+# Initialize H2O
+h2o.init()
+
+# Load the datasets
+train_data <- read_csv("train.csv")
+test_data <- read_csv("test.csv")
+
+# Preprocess the data
+train_data$data_type <- 0
+test_data$data_type <- 0
+
+# Feature engineering
+fe <- function(df) {
+  df$RainingDays <- ifelse(df$RainingDays == 26, 24,
+                           ifelse(df$RainingDays == 33, 34, df$RainingDays))
+  # Add new features or transformations here
+  return(df)
+}
+
+train_data <- fe(train_data)
+test_data <- fe(test_data)
+
+# Convert the datasets to H2OFrame
+train_h2o <- as.h2o(train_data)
+test_h2o <- as.h2o(test_data)
+
+# Set the features, target, and other settings for AutoML
+features <- colnames(train_h2o)[-which(colnames(train_h2o) %in% c('yield', 'data_type'))]
+target <- 'yield'
+
+# AutoML settings
+time_budget <- 14400  # Increase the time budget (in seconds) for AutoML
+n_folds <- 7  # Increase the number of folds for cross-validation
+random_seed <- 42  # Set the random seed for reproducibility
+
+# Run H2O's AutoML with a wider range of algorithms
+aml <- h2o.automl(
+  x = features,
+  y = target,
+  training_frame = train_h2o,
+  nfolds = n_folds,
+  max_runtime_secs = time_budget,
+  seed = random_seed,
+  include_algos = c("GBM", "XGBoost", "GLM", "DeepLearning", "DRF")
+)
+
+# Extract the best model
+best_model <- aml@leader
+
+# Make predictions on the test set
+test_preds <- h2o.predict(best_model, test_h2o)
+
+# Create the submission file
+submission <- data.frame(id = test_data$id, yield = as.vector(test_preds$predict))
+write.csv(submission, "submission_improved.csv", row.names = FALSE)
+
+# Shutdown H2O
+h2o.shutdown(prompt = FALSE)
+
+```
+```{r}
+# Initialize H2O
+h2o.init()
+
+# Define the features and target variables
+features <- colnames(train_data)[colnames(train_data) != "id" & colnames(train_data) != "yield"]
+target <- "yield"
+
+# Convert the datasets to H2OFrame
+train_h2o <- as.h2o(train_data)
+test_h2o <- as.h2o(test_data)
+
+# Define the constants for the number of outer folds, number of repeats, and the random seed
+n_outer_folds <- 10  # Increase the number of cross-validation folds
+n_repeats <- 3
+random_seed <- 42
+
+# Train the H2O AutoML model
+aml <- h2o.automl(
+  x = features,
+  y = target,
+  training_frame = train_h2o,
+  nfolds = n_outer_folds,
+  max_runtime_secs = 7200,  # Increase the time budget for AutoML (2 hours)
+  seed = random_seed,
+  include_algos = c("GBM", "XGBoost", "GLM", "DeepLearning", "DRF")  # Include multiple algorithms
+)
+
+# Get the best model
+best_model <- aml@leader
+
+# Make predictions using the best model
+test_preds <- h2o.predict(best_model, test_h2o)
+
+# Save the predictions to a CSV file
+submission <- data.frame(id = test_data$id, yield = as.vector(test_preds$predict))
+write.csv(submission, "submission_improved.csv", row.names = FALSE)
+
+# Shutdown H2O
+h2o.shutdown(prompt = FALSE)
 
 ```
 

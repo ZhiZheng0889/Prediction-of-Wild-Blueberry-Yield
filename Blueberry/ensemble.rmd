@@ -1,0 +1,268 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(h2o)
+
+# Initialize H2O
+h2o.init()
+
+# Set seed for reproducibility
+seed <- 2112
+
+# Read data
+INPUT_DIR <- "/kaggle/input/playground-series-s3e14/"
+TARGET_NAME <- 'yield'
+
+train_data <- read_csv("train.csv")
+test_data <- read_csv("test.csv")
+
+# Convert to H2OFrame
+train_h2o <- as.h2o(train_data)
+test_h2o <- as.h2o(test_data)
+
+# Identify predictors and response
+predictors <- c('MinOfLowerTRange', 'RainingDays', 'fruitmass', 'fruitset', 'seeds', 'bumbles', 'clonesize')
+response <- TARGET_NAME
+
+# Run AutoML for 20 base models (limited to 1 hour max runtime by default)
+aml <- h2o.automl(
+  x = predictors, 
+  y = response, 
+  training_frame = train_h2o, 
+  seed = seed, 
+  max_models = 20
+)
+
+# View the AutoML Leaderboard
+lb <- aml@leaderboard
+print(lb, n = nrow(lb))
+
+# Predict using the leader model
+preds <- h2o.predict(aml@leader, newdata = test_h2o)
+
+# Convert H2O Frame to useable format
+preds <- as.data.frame(preds)
+
+# Prepare submission
+submission <- data.frame(
+  id = test_data$id,
+  yield = preds$predict
+)
+
+# Save the result
+write.csv(submission, file = "submission.csv", row.names = FALSE)
+
+```
+```{r}
+# Note: Not every Python library has a direct equivalent in R. 
+
+# Equivalent to pandas
+library(dplyr) 
+library(readr)
+library(tidyr)
+
+# Equivalent to numpy
+library(matrixStats)
+
+# Equivalent to matplotlib.pyplot and seaborn
+library(ggplot2)
+
+# Equivalent to plotly
+library(plotly)
+
+# Equivalent to sklearn
+library(caret)
+library(e1071)
+library(randomForest)
+library(xgboost)
+library(lightgbm)
+library(glmnet)
+library(nnet)
+library(kernlab)
+library(kknn)
+library(MASS)
+
+# Equivalent to imblearn
+# There is no direct equivalent in R for imblearn, but the unbalanced package provides similar functionality
+# install.packages('unbalanced')
+library(ROSE)
+library(DMwR2)
+
+
+# Equivalent to category_encoders
+# There is no direct equivalent in R for category_encoders, but recipes or caret can be used for encoding.
+library(recipes)
+library(caret)
+
+# PCA
+library(FactoMineR)
+
+# Equivalent to optuna
+library(mlrMBO)
+
+# Equivalent to boost
+library(xgboost)
+library(lightgbm)
+
+# Equivalent to warnings
+options(warn = -1)
+```
+
+
+```{r}
+PATH_ORIGIN <- 'WildBlueberryPollinationSimulationData.csv'
+PATH_TRAIN <- 'train.csv'
+PATH_TEST <- 'test.csv'
+PATH_SUB <- 'sample_submission.csv'
+
+original <- read.csv(PATH_ORIGIN)[, -1]
+df_train <- read.csv(PATH_TRAIN)[, -1]
+df_test <- read.csv(PATH_TEST)[, -1]
+
+target_col <- 'yield'
+
+```
+
+
+```{r}
+# print the dimensions
+cat("\n[INFO] Shapes:")
+cat("\n original: ", dim(original))
+cat("\n train: ", dim(df_train))
+cat("\n test: ", dim(df_test))
+
+# check for missing values
+cat("\n\n[INFO] Any missing values:")
+cat("\n original: ", any(is.na(original)))
+cat("\n train: ", any(is.na(df_train)))
+cat("\n test: ", any(is.na(df_test)))
+
+```
+```{r}
+full_train <- rbind(df_train, original)
+head(full_train)
+
+```
+```{r}
+# Load the necessary library
+library(ggplot2)
+library(corrplot)
+
+# Create histogram for df_train
+p1 <- ggplot(df_train, aes(x=yield)) +
+  geom_histogram(fill="#1192AA", color="black", binwidth=1) +
+  theme_minimal() +
+  labs(x="Yield Value",
+       y="Frequency",
+       title="Yield Distribution in `df_train`") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Display
+print(p1)
+
+# Create histogram for original
+p2 <- ggplot(original, aes(x=yield)) +
+  geom_histogram(fill="#1192AA", color="black", binwidth=1) +
+  theme_minimal() +
+  labs(x="Yield Value",
+       y="Frequency",
+       title="Yield Distribution in `original`") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Display
+print(p2)
+
+# Calculate the correlation matrix
+corr_mat <- cor(df_train)
+
+# Create correlation plot
+corrplot(corr_mat, method = "color", type = "upper", 
+         title="Train Dataset Correlation", mar=c(0,0,1,0))
+
+# Compute the correlation matrix
+corr_matrix <- cor(original)
+
+# Create the correlation plot
+corrplot(corr_matrix, method = "color")
+
+# Plot function
+plot_column_distribution <- function(df, column_name) {
+  # Create histogram for df_train
+  p <- ggplot(df, aes_string(x=column_name)) +
+    geom_histogram(fill="#1192AA", color="black", binwidth=1) +
+    theme_minimal() +
+    labs(x="Value",
+         y="Frequency",
+         title=column_name) +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  # Display
+  print(p)
+}
+
+# For each column in df_train, plot the distribution
+for (column in names(df_train)[1:(ncol(df_train)-1)]) {
+  plot_column_distribution(df_train, column)
+}
+
+
+```
+```{r}
+# Define function to add features
+add_features <- function(df_in) {
+  df <- df_in %>% mutate(fruit_seed = fruitset * seeds)
+  return(df)
+}
+
+# Add features to the dataframes
+df_train <- add_features(df_train)
+df_test <- add_features(df_test)
+original <- add_features(original)
+
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(caret)
+
+# Concatenate train and original dataframes
+df_train <- rbind(df_train, original)
+
+# Prepare train and test sets
+X_train <- df_train %>%
+  select(-"yield") %>%
+  data.frame()
+rownames(X_train) <- NULL
+
+y_train <- df_train[["yield"]]
+rownames(y_train) <- NULL
+
+X_test <- df_test
+rownames(X_test) <- NULL
+
+# Define categorical and numeric columns
+categorical_columns <- c('is_generated')
+numeric_columns <- setdiff(names(X_train), categorical_columns)
+
+# Scale data
+preProc <- caret::preProcess(X_train[, numeric_columns], method = "range")
+X_train[, numeric_columns] <- predict(preProc, X_train[, numeric_columns])
+X_test[, numeric_columns] <- predict(preProc, X_test[, numeric_columns])
+
+# Print shapes of data
+cat(paste0("X_train shape: ", toString(dim(X_train)), " , y_train shape: ", toString(length(y_train)), "\n"))
+cat(paste0("X_test shape: ", toString(dim(X_test)), "\n"))
+
+# Delete the train and test dataframes to free up memory
+rm(df_train, df_test, original)
+
+# Display first few rows of X_train
+head(X_train, 5)
+
+```
+
