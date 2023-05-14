@@ -1,0 +1,612 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r}
+original_data <- read_csv("WildBlueberryPollinationSimulationData.csv")
+train_data <- read_csv("train.csv")
+test_data <- read_csv("test.csv")
+
+```
+
+```{r}
+head(train_data)
+summary(train_data)
+glimpse(train_data)
+
+```
+
+```{r}
+# Reshape the data into a long format
+train_data_long <- train_data %>%
+  gather(key = "variable", value = "value", -yield)
+
+# Create scatterplots for all variables against yield
+ggplot(train_data_long, aes(x = value, y = yield)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ variable, scales = "free") +
+  labs(title = "Scatterplots of Variables against Yield", x = "Variable Value", y = "Yield")
+
+```
+
+```{r}
+train_data_clean <- train_data %>%
+  drop_na()
+test_data$yield <- NA
+
+
+```
+
+```{r}
+model <- lm(yield ~ ., data = train_data_clean)
+summary(model)
+
+```
+
+```{r}
+# Load the libraries and read the datasets
+library(tidyverse)
+
+original_data <- read_csv("WildBlueberryPollinationSimulationData.csv")
+train_data <- read_csv("train.csv")
+
+# Remove the 'Row#' column and add an 'id' column to the original dataset
+original_data <- original_data %>% 
+  select(-`Row#`) %>%
+  mutate(id = row_number() - 1)
+
+# Combine the original dataset with the training dataset
+combined_data <- bind_rows(original_data, train_data)
+
+```
+```{r}
+# Load required libraries
+install.packages("glmnet")
+library(glmnet)
+
+# Load data
+data <- combined_data
+
+# Split data into training (70%) and testing (30%) sets
+set.seed(123)
+sample_size <- floor(0.7 * nrow(data))
+train_indices <- sample(seq_len(nrow(data)), size = sample_size)
+train_data <- data[train_indices, ]
+test_data <- data[-train_indices, ]
+
+# Prepare the data
+X <- model.matrix(yield ~ ., data = train_data)[,-1]  # Remove the intercept column
+y <- train_data$yield
+
+# Perform LASSO using cross-validation
+set.seed(123)
+cv_lasso <- cv.glmnet(X, y, alpha = 1, nfolds = 10)
+
+# Get the best lambda value and train the LASSO model
+best_lambda <- cv_lasso$lambda.min
+lasso_model <- glmnet(X, y, alpha = 1, lambda = best_lambda)
+
+# Inspect the coefficients
+coef(lasso_model)
+
+# Prepare test data and make predictions
+X_test <- model.matrix(yield ~ ., data = test_data)[,-1]
+predictions <- predict(lasso_model, newx = X_test)
+
+```
+```{r}
+# Load necessary libraries
+library(glmnet)
+
+# Assuming 'data' is your dataset
+# Split the data into training and test sets (80% training, 20% test)
+set.seed(123)
+split_index <- sample(1:nrow(data), round(0.8 * nrow(data)))
+train <- data[split_index, ]
+test <- data[-split_index, ]
+
+# Prepare the data for LASSO regression
+x_train <- model.matrix(yield ~ ., train)[, -1] # Remove intercept column
+y_train <- train$yield
+x_test <- model.matrix(yield ~ ., test)[, -1]
+y_test <- test$yield
+
+# Train the LASSO model
+lasso_model <- glmnet(x_train, y_train, alpha = 1, family = "gaussian")
+
+# Choose the best lambda using cross-validation
+cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1, family = "gaussian")
+best_lambda <- cv_lasso$lambda.min
+
+# Make predictions on the test set
+y_pred <- predict(lasso_model, s = best_lambda, newx = x_test)
+
+# Calculate the Mean Absolute Error
+mae <- mean(abs(y_test - y_pred))
+
+# Create a submission file
+submission <- data.frame(id = test$id, yield = y_pred)
+write.csv(submission, "submission.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+# Install and load required packages
+library(tidyverse)
+library(GGally)
+library(corrplot)
+
+# Load the datasets
+original_data_url <- "https://www.dropbox.com/s/4acgjo45a30hmsk/WildBlueberryPollinationSimulationData.csv?dl=1"
+train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
+test_data_url <- "https://www.dropbox.com/s/62xd4ajnwrqc7eg/test.csv?dl=1"
+
+original_data <- read_csv(original_data_url)
+train_data <- read_csv(train_data_url)
+test_data <- read_csv(test_data_url)
+
+# Analyze the data
+# Display the first few rows of the datasets
+print("Original Data:")
+head(original_data)
+print("\nTrain Data:")
+head(train_data)
+print("\nTest Data:")
+head(test_data)
+
+# Display dataset information
+print("Original Data:")
+glimpse(original_data)
+print("\nTrain Data:")
+glimpse(train_data)
+print("\nTest Data:")
+glimpse(test_data)
+
+# Display descriptive statistics
+print("Original Data:")
+summary(original_data)
+print("\nTrain Data:")
+summary(train_data)
+print("\nTest Data:")
+summary(test_data)
+
+# Visualize the data
+# Correlation matrix heatmap for train_data
+train_data_cor <- cor(train_data)  # Make sure your data is all numeric
+corrplot(train_data_cor, method = "color", type = "lower", tl.col = "black", diag = FALSE)
+
+# Histograms of all features for train_data
+train_data %>%
+  gather() %>%
+  ggplot(aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~ key, scales = "free_x")
+
+# Scatterplot matrix (pairplot) for selected features
+selected_features <- train_data %>% dplyr::select(
+    clonesize, honeybee, bumbles, andrena, osmia, MaxOfUpperTRange,
+    MinOfUpperTRange, AverageOfUpperTRange, MaxOfLowerTRange, MinOfLowerTRange,
+    AverageOfLowerTRange, RainingDays, AverageRainingDays, fruitset, fruitmass, seeds, yield
+)
+ggpairs(selected_features)
+
+
+```
+
+```{r}
+# Load already installed packages
+library(tidyverse)
+library(randomForest)
+library(xgboost)
+library(Metrics)
+library(caret)
+
+# Load the datasets
+train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
+train_data <- read_csv(train_data_url)
+
+# Drop 'id' column from the train dataset
+train_data <- train_data %>% dplyr::select(-id)
+
+# Split the train dataset into training and validation sets
+set.seed(42)
+train_index <- createDataPartition(train_data$yield, p = 0.8, list = FALSE)
+train_set <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
+
+# Train a Linear Regression model
+lm_model <- lm(yield ~ ., data = train_set)
+lm_predictions <- predict(lm_model, validation_set)
+lm_mae <- mae(validation_set$yield, lm_predictions)
+
+# Train a Random Forest model
+set.seed(42)
+rf_model <- randomForest(yield ~ ., data = train_set)
+rf_predictions <- predict(rf_model, validation_set)
+rf_mae <- mae(validation_set$yield, rf_predictions)
+
+# Prepare data for XGBoost
+xgb_train <- train_set %>% select(-yield) %>% as.matrix()
+xgb_validation <- validation_set %>% select(-yield) %>% as.matrix()
+xgb_labels <- as.numeric(train_set$yield)
+xgb_validation_labels <- as.numeric(validation_set$yield)
+dtrain <- xgb.DMatrix(data = xgb_train, label = xgb_labels)
+dvalidation <- xgb.DMatrix(data = xgb_validation, label = xgb_validation_labels)
+
+# Train an XGBoost model
+set.seed(42)
+xgb_model <- xgboost(
+  data = dtrain,
+  nrounds = 100,
+  objective = "reg:squarederror",
+  verbose = 0
+)
+
+# Make predictions using the XGBoost model
+xgb_predictions <- predict(xgb_model, dvalidation)
+xgb_mae <- mae(xgb_validation_labels, xgb_predictions)
+
+# Compare model performance
+model_performance <- tibble(
+  Model = c("Linear Regression", "Random Forest", "XGBoost"),
+  MAE = c(lm_mae, rf_mae, xgb_mae)
+)
+
+model_performance
+
+```
+
+```{r}
+# Load already installed packages
+library(tidyverse)
+
+# Install and load required packages for modeling
+install.packages("randomForest")
+library(randomForest)
+
+install.packages("Metrics")
+library(Metrics)
+
+install.packages("caret")
+library(caret)
+
+# Load the datasets
+train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
+train_data <- read_csv(train_data_url)
+
+# Drop 'id' column from the train dataset
+train_data <- train_data %>% dplyr::select(-id)
+
+# Split the train dataset into training and validation sets
+set.seed(42)
+train_index <- createDataPartition(train_data$yield, p = 0.8, list = FALSE)
+train_set <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
+
+# Set up cross-validation
+set.seed(42)
+cv <- trainControl(method = "cv", number = 5)
+
+# Define the hyperparameter search grid
+hyper_grid <- expand.grid(
+  mtry = seq(2, ncol(train_set) - 1, by = 1)
+)
+
+# Train and tune the Random Forest model
+set.seed(42)
+tuned_rf <- train(
+  yield ~ .,
+  data = train_set,
+  method = "rf",
+  metric = "MAE",
+  trControl = cv,
+  tuneGrid = hyper_grid,
+  ntree = 500,
+  importance = TRUE
+)
+
+# Print the best hyperparameters
+print(tuned_rf$bestTune)
+
+# Make predictions using the tuned Random Forest model
+tuned_rf_predictions <- predict(tuned_rf, validation_set)
+
+# Compute the Mean Absolute Error (MAE) for the tuned model
+tuned_rf_mae <- mae(validation_set$yield, tuned_rf_predictions)
+print(paste("Tuned Random Forest MAE:", tuned_rf_mae))
+
+```
+
+```{r}
+# Load required libraries
+library(tidyverse)
+library(randomForest)
+library(ipred)
+library(gbm)
+library(superml)
+library(Metrics)
+library(rpart)
+library(caret)
+library(mlr)
+
+# Load the datasets
+train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
+train_data <- read_csv(train_data_url)
+
+# Drop 'id' column from the train dataset
+train_data <- train_data %>% dplyr::select(-id)
+
+# Split the train dataset into training and validation sets
+set.seed(42)
+train_index <- createDataPartition(train_data$yield, p = 0.8, list = FALSE)
+train_set <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
+
+# Bagging
+set.seed(42)
+bagging_model <- bagging(yield ~ ., 
+                         data = train_set, 
+                         B = 10,  # Number of base models
+                         coob = TRUE, 
+                         control = rpart.control(cp = 0.01))
+
+bagging_predictions <- predict(bagging_model, validation_set)
+bagging_mae <- mae(validation_set$yield, bagging_predictions)
+print(paste("Bagging MAE:", bagging_mae))
+
+# Boosting
+set.seed(42)
+boosting_model <- gbm(yield ~ ., 
+                      data = train_set, 
+                      distribution = "gaussian", 
+                      n.trees = 100,
+                      interaction.depth = 4,
+                      shrinkage = 0.1,
+                      bag.fraction = 0.5)
+
+boosting_predictions <- predict(boosting_model, validation_set, n.trees = 100)
+boosting_mae <- mae(validation_set$yield, boosting_predictions)
+print(paste("Boosting MAE:", boosting_mae))
+
+# Create a task for the training set
+train_task <- makeRegrTask(id = "train", data = train_set, target = "yield")
+
+# Define base models
+lrn1 <- makeLearner("regr.randomForest", id = "rf_model1")
+lrn2 <- makeLearner("regr.randomForest", id = "rf_model2")
+
+# Create a list of base models
+base_learners <- list(lrn1, lrn2)
+
+# Train the Stacking model
+stack <- makeStackedLearner(base_learners, super.learner = "regr.lm", method = "stack.cv")
+stack_model <- train(stack, train_task)
+
+# Make predictions using the Stacking model
+stacking_predictions <- predict(stack_model, newdata = validation_set)
+stacking_mae <- mae(validation_set$yield, stacking_predictions$data$response)
+print(paste("Stacking MAE:", stacking_mae))
+
+
+
+```
+```{r}
+# Load required libraries
+library(tidyverse)
+library(randomForest)
+library(ipred)
+library(gbm)
+library(superml)
+library(Metrics)
+library(rpart)
+library(mlr)
+
+# Load the datasets
+train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
+train_data <- read_csv(train_data_url)
+
+# Drop 'id' column from the train dataset
+train_data <- train_data %>% dplyr::select(-id)
+
+# Create a task for the entire train dataset
+train_task <- makeRegrTask(id = "train", data = train_data, target = "yield")
+
+# Define base models
+lrn1 <- makeLearner("regr.randomForest", id = "rf_model1")
+lrn2 <- makeLearner("regr.randomForest", id = "rf_model2")
+
+# Create a list of base models
+base_learners <- list(lrn1, lrn2)
+
+# Train the Stacking model
+stack <- makeStackedLearner(base_learners, super.learner = "regr.lm", method = "stack.cv")
+
+# Define 10-fold cross-validation strategy
+cv_desc <- makeResampleDesc("CV", iters = 10)
+
+# Define the MAE measure provided by the 'mlr' package
+mlr_mae <- makeMeasure(id = "mae", name = "Mean absolute error", minimize = TRUE, properties = c("regr", "req.pred", "req.truth"), fun = function(task, model, pred) {
+  return(mean(abs(pred$data$truth - pred$data$response)))
+})
+
+# Update the custom measure to ignore extra arguments
+mlr_mae$fun <- function(task, model, pred, ...) {
+  return(mean(abs(pred$data$truth - pred$data$response)))
+}
+
+# Perform 10-fold cross-validation on the Stacking model
+set.seed(42)
+cv_results <- resample(learner = stack, task = train_task, resampling = cv_desc, measures = list(mlr_mae))
+
+# Obtain the cross-validated MAE
+cv_mae <- cv_results$aggr
+print(paste("10-fold cross-validated MAE:", cv_mae))
+
+# Load the test dataset
+test_data_url <- "https://www.dropbox.com/s/62xd4ajnwrqc7eg/test.csv?dl=1"
+test_data <- read_csv(test_data_url)
+
+# Train the Stacking model on the entire training data
+trained_stack <- train(stack, train_task)
+
+# Predict the yield for the test dataset
+test_preds <- predict(trained_stack, newdata = test_data %>% dplyr::select(-id))
+
+# Create a submission file
+submission <- data.frame(id = test_data$id, yield = test_preds$data$response)
+write.csv(submission, "submission.csv", row.names = FALSE)
+
+
+```
+```{r}
+# Load required libraries
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(h2o)
+
+# Initialize H2O
+h2o.init()
+
+# Load the datasets
+train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
+train_data <- read_csv(train_data_url)
+test_data_url <- "https://www.dropbox.com/s/62xd4ajnwrqc7eg/test.csv?dl=1"
+test_data <- read_csv(test_data_url)
+
+# Drop 'id' column from the train dataset
+train_data <- train_data %>% dplyr::select(-id)
+
+# Split the train dataset into training and validation sets
+set.seed(42)
+train_index <- createDataPartition(train_data$yield, p = 0.8, list = FALSE)
+train_set <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
+
+# Convert data.frames to H2OFrame
+train_set_h2o <- as.h2o(train_set)
+validation_set_h2o <- as.h2o(validation_set)
+test_data_h2o <- as.h2o(test_data %>% dplyr::select(-id))
+
+# Train base models using H2O
+rf_model1 <- h2o.randomForest(y = "yield", training_frame = train_set_h2o, nfolds = 10, seed = 42, keep_cross_validation_predictions = TRUE)
+rf_model2 <- h2o.randomForest(y = "yield", training_frame = train_set_h2o, nfolds = 10, mtries = 5, seed = 42, keep_cross_validation_predictions = TRUE)
+rf_model3 <- h2o.randomForest(y = "yield", training_frame = train_set_h2o, nfolds = 10, mtries = 10, seed = 42, keep_cross_validation_predictions = TRUE)
+rf_model4 <- h2o.randomForest(y = "yield", training_frame = train_set_h2o, nfolds = 10, mtries = 15, seed = 42, keep_cross_validation_predictions = TRUE)
+
+# Train the Stacking model
+base_models <- list(rf_model1@model_id, rf_model2@model_id, rf_model3@model_id, rf_model4@model_id)
+stacking_model <- h2o.stackedEnsemble(y = "yield", training_frame = train_set_h2o, base_models = base_models, seed = 42)
+
+# Make predictions using the Stacking model
+predictions <- h2o.predict(stacking_model, test_data_h2o)
+
+# Create a submission file
+submission <- data.frame(id = test_data$id, yield = as.vector(predictions$predict))
+write.csv(submission, "submission.csv", row.names = FALSE)
+
+# Shutdown H2O
+h2o.shutdown(prompt = FALSE)
+
+
+```
+```{r}
+# Load required libraries
+library(tidyverse)
+library(randomForest)
+library(ipred)
+library(gbm)
+library(superml)
+library(Metrics)
+library(rpart)
+library(caret)
+library(mlr)
+
+# Load the datasets
+train_data_url <- "https://www.dropbox.com/s/2nx73ix5vcwb13y/train.csv?dl=1"
+train_data <- read_csv(train_data_url)
+
+# Drop 'id' column from the train dataset
+train_data <- train_data %>% dplyr::select(-id)
+
+# Split the train dataset into training and validation sets
+set.seed(42)
+train_index <- createDataPartition(train_data$yield, p = 0.8, list = FALSE)
+train_set <- train_data[train_index, ]
+validation_set <- train_data[-train_index, ]
+
+# Bagging
+set.seed(42)
+bagging_model <- bagging(yield ~ ., 
+                         data = train_set, 
+                         B = 10,  # Number of base models
+                         coob = TRUE, 
+                         control = rpart.control(cp = 0.01))
+
+bagging_predictions <- predict(bagging_model, validation_set)
+bagging_mae <- mae(validation_set$yield, bagging_predictions)
+print(paste("Bagging MAE:", bagging_mae))
+
+# Boosting
+set.seed(42)
+boosting_model <- gbm(yield ~ ., 
+                      data = train_set, 
+                      distribution = "gaussian", 
+                      n.trees = 100,
+                      interaction.depth = 4,
+                      shrinkage = 0.1,
+                      bag.fraction = 0.5)
+
+boosting_predictions <- predict(boosting_model, validation_set, n.trees = 100)
+boosting_mae <- mae(validation_set$yield, boosting_predictions)
+print(paste("Boosting MAE:", boosting_mae))
+
+# Create a task for the training set
+train_task <- makeRegrTask(id = "train", data = train_set, target = "yield")
+
+# Define base models
+lrn1 <- makeLearner("regr.randomForest", id = "rf_model1")
+lrn2 <- makeLearner("regr.randomForest", id = "rf_model2")
+
+# Create a list of base models
+base_learners <- list(lrn1, lrn2)
+
+# Train the Stacking model
+stack <- makeStackedLearner(base_learners, super.learner = "regr.lm", method = "stack.cv")
+
+# Define 20-fold cross-validation strategy
+cv_desc <- makeResampleDesc("CV", iters = 20)
+
+# Perform 20-fold cross-validation on the Stacking model
+set.seed(42)
+cv_results <- resample(learner = stack, task = train_task, resampling = cv_desc, measures = list(mlr_mae))
+
+# Obtain the cross-validated MAE
+cv_mae <- cv_results$aggr
+print(paste("20-fold cross-validated MAE:", cv_mae))
+
+# Load the test dataset
+test_data_url <- "https://www.dropbox.com/s/62xd4ajnwrqc7eg/test.csv?dl=1"
+test_data <- read_csv(test_data_url)
+
+# Train the Stacking model on the entire train dataset
+stack_model_full <- train(stack, makeRegrTask(id = "full_train", data = train_data, target = "yield"))
+
+# Make predictions using the Stacking model on the test dataset
+test_data_no_id <- test_data %>% dplyr::select(-id)
+stacking_test_predictions <- predict(stack_model_full, newdata = test_data_no_id)
+
+# Create a submission file
+submission <- data.frame(id = test_data$id, yield = stacking_test_predictions$data$response)
+write.csv(submission, "submission.csv", row.names = FALSE)
+
+```
+
